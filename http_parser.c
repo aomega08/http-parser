@@ -279,23 +279,6 @@ static const uint8_t normal_url_char[32] = {
 enum state
   { s_dead = 1 /* important that this is > 0 */
 
-  , s_start_req_or_res
-  , s_res_or_resp_H
-  , s_start_res
-  , s_res_H
-  , s_res_HT
-  , s_res_HTT
-  , s_res_HTTP
-  , s_res_first_http_major
-  , s_res_http_major
-  , s_res_first_http_minor
-  , s_res_http_minor
-  , s_res_first_status_code
-  , s_res_status_code
-  , s_res_status_start
-  , s_res_status
-  , s_res_line_almost_done
-
   , s_start_req
 
   , s_req_method
@@ -434,7 +417,7 @@ enum http_host_state
 #endif
 
 
-#define start_state (parser->type == HTTP_REQUEST ? s_start_req : s_start_res)
+#define start_state (s_start_req)
 
 
 #if HTTP_PARSER_STRICT
@@ -653,8 +636,6 @@ size_t http_parser_execute (http_parser *parser,
         return 0;
 
       case s_dead:
-      case s_start_req_or_res:
-      case s_start_res:
       case s_start_req:
         return 0;
 
@@ -683,9 +664,6 @@ size_t http_parser_execute (http_parser *parser,
   case s_req_fragment:
     url_mark = data;
     break;
-  case s_res_status:
-    status_mark = data;
-    break;
   default:
     break;
   }
@@ -708,239 +686,6 @@ reexecute:
 
         SET_ERRNO(HPE_CLOSED_CONNECTION);
         goto error;
-
-      case s_start_req_or_res:
-      {
-        if (ch == CR || ch == LF)
-          break;
-        parser->flags = 0;
-        parser->content_length = ULLONG_MAX;
-
-        if (ch == 'H') {
-          UPDATE_STATE(s_res_or_resp_H);
-
-          CALLBACK_NOTIFY(message_begin);
-        } else {
-          parser->type = HTTP_REQUEST;
-          UPDATE_STATE(s_start_req);
-          REEXECUTE();
-        }
-
-        break;
-      }
-
-      case s_res_or_resp_H:
-        if (ch == 'T') {
-          parser->type = HTTP_RESPONSE;
-          UPDATE_STATE(s_res_HT);
-        } else {
-          if (UNLIKELY(ch != 'E')) {
-            SET_ERRNO(HPE_INVALID_CONSTANT);
-            goto error;
-          }
-
-          parser->type = HTTP_REQUEST;
-          parser->method = HTTP_HEAD;
-          parser->index = 2;
-          UPDATE_STATE(s_req_method);
-        }
-        break;
-
-      case s_start_res:
-      {
-        parser->flags = 0;
-        parser->content_length = ULLONG_MAX;
-
-        switch (ch) {
-          case 'H':
-            UPDATE_STATE(s_res_H);
-            break;
-
-          case CR:
-          case LF:
-            break;
-
-          default:
-            SET_ERRNO(HPE_INVALID_CONSTANT);
-            goto error;
-        }
-
-        CALLBACK_NOTIFY(message_begin);
-        break;
-      }
-
-      case s_res_H:
-        STRICT_CHECK(ch != 'T');
-        UPDATE_STATE(s_res_HT);
-        break;
-
-      case s_res_HT:
-        STRICT_CHECK(ch != 'T');
-        UPDATE_STATE(s_res_HTT);
-        break;
-
-      case s_res_HTT:
-        STRICT_CHECK(ch != 'P');
-        UPDATE_STATE(s_res_HTTP);
-        break;
-
-      case s_res_HTTP:
-        STRICT_CHECK(ch != '/');
-        UPDATE_STATE(s_res_first_http_major);
-        break;
-
-      case s_res_first_http_major:
-        if (UNLIKELY(ch < '0' || ch > '9')) {
-          SET_ERRNO(HPE_INVALID_VERSION);
-          goto error;
-        }
-
-        parser->http_major = ch - '0';
-        UPDATE_STATE(s_res_http_major);
-        break;
-
-      /* major HTTP version or dot */
-      case s_res_http_major:
-      {
-        if (ch == '.') {
-          UPDATE_STATE(s_res_first_http_minor);
-          break;
-        }
-
-        if (!IS_NUM(ch)) {
-          SET_ERRNO(HPE_INVALID_VERSION);
-          goto error;
-        }
-
-        parser->http_major *= 10;
-        parser->http_major += ch - '0';
-
-        if (UNLIKELY(parser->http_major > 999)) {
-          SET_ERRNO(HPE_INVALID_VERSION);
-          goto error;
-        }
-
-        break;
-      }
-
-      /* first digit of minor HTTP version */
-      case s_res_first_http_minor:
-        if (UNLIKELY(!IS_NUM(ch))) {
-          SET_ERRNO(HPE_INVALID_VERSION);
-          goto error;
-        }
-
-        parser->http_minor = ch - '0';
-        UPDATE_STATE(s_res_http_minor);
-        break;
-
-      /* minor HTTP version or end of request line */
-      case s_res_http_minor:
-      {
-        if (ch == ' ') {
-          UPDATE_STATE(s_res_first_status_code);
-          break;
-        }
-
-        if (UNLIKELY(!IS_NUM(ch))) {
-          SET_ERRNO(HPE_INVALID_VERSION);
-          goto error;
-        }
-
-        parser->http_minor *= 10;
-        parser->http_minor += ch - '0';
-
-        if (UNLIKELY(parser->http_minor > 999)) {
-          SET_ERRNO(HPE_INVALID_VERSION);
-          goto error;
-        }
-
-        break;
-      }
-
-      case s_res_first_status_code:
-      {
-        if (!IS_NUM(ch)) {
-          if (ch == ' ') {
-            break;
-          }
-
-          SET_ERRNO(HPE_INVALID_STATUS);
-          goto error;
-        }
-        parser->status_code = ch - '0';
-        UPDATE_STATE(s_res_status_code);
-        break;
-      }
-
-      case s_res_status_code:
-      {
-        if (!IS_NUM(ch)) {
-          switch (ch) {
-            case ' ':
-              UPDATE_STATE(s_res_status_start);
-              break;
-            case CR:
-              UPDATE_STATE(s_res_line_almost_done);
-              break;
-            case LF:
-              UPDATE_STATE(s_header_field_start);
-              break;
-            default:
-              SET_ERRNO(HPE_INVALID_STATUS);
-              goto error;
-          }
-          break;
-        }
-
-        parser->status_code *= 10;
-        parser->status_code += ch - '0';
-
-        if (UNLIKELY(parser->status_code > 999)) {
-          SET_ERRNO(HPE_INVALID_STATUS);
-          goto error;
-        }
-
-        break;
-      }
-
-      case s_res_status_start:
-      {
-        if (ch == CR) {
-          UPDATE_STATE(s_res_line_almost_done);
-          break;
-        }
-
-        if (ch == LF) {
-          UPDATE_STATE(s_header_field_start);
-          break;
-        }
-
-        MARK(status);
-        UPDATE_STATE(s_res_status);
-        parser->index = 0;
-        break;
-      }
-
-      case s_res_status:
-        if (ch == CR) {
-          UPDATE_STATE(s_res_line_almost_done);
-          CALLBACK_DATA(status);
-          break;
-        }
-
-        if (ch == LF) {
-          UPDATE_STATE(s_header_field_start);
-          CALLBACK_DATA(status);
-          break;
-        }
-
-        break;
-
-      case s_res_line_almost_done:
-        STRICT_CHECK(ch != LF);
-        UPDATE_STATE(s_header_field_start);
-        break;
 
       case s_start_req:
       {
@@ -2140,7 +1885,7 @@ http_parser_init (http_parser *parser, enum http_parser_type t)
   memset(parser, 0, sizeof(*parser));
   parser->data = data;
   parser->type = t;
-  parser->state = (t == HTTP_REQUEST ? s_start_req : (t == HTTP_RESPONSE ? s_start_res : s_start_req_or_res));
+  parser->state = s_start_req;
   parser->http_errno = HPE_OK;
 }
 
