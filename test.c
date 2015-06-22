@@ -2574,16 +2574,14 @@ test_simple (const char *buf, enum http_errno err_expected)
 }
 
 void
-test_header_overflow_error (int req)
+test_header_overflow_error ()
 {
   http_parser parser;
-  assert(req == HTTP_REQUEST);
   http_parser_init(&parser, HTTP_REQUEST);
   size_t parsed;
   const char *buf;
   buf = "GET / HTTP/1.1\r\n";
   parsed = http_parser_execute(&parser, &settings_null, buf, strlen(buf));
-  printf("%lu\n\n", strlen(buf));
 
   buf = "header-key: header-value\r\n";
   size_t buflen = strlen(buf);
@@ -2618,7 +2616,7 @@ test_header_nread_value ()
 }
 
 void
-test_no_overflow_long_body (int req, size_t length)
+test_no_overflow_long_body (size_t length)
 {
   http_parser parser;
   http_parser_init(&parser, HTTP_REQUEST);
@@ -2939,9 +2937,9 @@ main (void)
 
   //// OVERFLOW CONDITIONS
 
-  test_header_overflow_error(HTTP_REQUEST);
-  test_no_overflow_long_body(HTTP_REQUEST, 1000);
-  test_no_overflow_long_body(HTTP_REQUEST, 100000);
+  test_header_overflow_error();
+  test_no_overflow_long_body(1000);
+  test_no_overflow_long_body(100000);
 
   /// REQUESTS
 
